@@ -33,6 +33,7 @@ STATUS_TO_REMOVE = [
 
 
 def validate_headers(df_columns, expected):
+    """Compare restructured columns vs expected. Returns (is_valid, mismatches)."""
     actual = list(df_columns)
     mismatches = []
 
@@ -43,7 +44,10 @@ def validate_headers(df_columns, expected):
 
     for i, (a, e) in enumerate(zip(actual, expected)):
         if str(a).strip() != e:
-            mismatches.append(f"Col {i+1}: expected **'{e}'** → got **'{a}'**")
+            mismatches.append(
+                f"Col {i+1} ('{chr(64 + i+1) if i < 26 else 'A' + chr(64 + i-25)}'): "
+                f"expected **'{e}'** → got **'{a}'**"
+            )
 
     return len(mismatches) == 0, mismatches
 
@@ -58,77 +62,92 @@ if uploaded_file:
 
         st.subheader("Preview — Raw File")
         st.dataframe(df.head(10), use_container_width=True)
-        st.caption(f"Rows: {len(df)} | Columns: {len(df.columns)}")
+        st.caption(f"Raw file: {len(df)} rows | {len(df.columns)} columns")
 
+        # ── 2. Restructure Columns ────────────────────────────────────────────
         with st.spinner("Restructuring columns..."):
 
-            # ── 2. Swap Next Call (W=col 22) and PTP Date (X=col 23) ─────────
+            # Step 1: Swap Next Call (W = index 22) and PTP Date (X = index 23)
+            # Raw file: W = Next Call, X = PTP Date
+            # After swap: W = PTP Date, X = Next Call
             cols = list(df.columns)
             cols[22], cols[23] = cols[23], cols[22]
             df = df[cols]
 
-            # ── 3. Copy Old IC (AO=col 40) and insert beside Contact Type (AD=col 29) → AE=col 30 ──
+            # Step 2: Copy Old IC (AO = index 40) and insert at index 30
+            # This places Old IC at AE, right beside Contact Type (AD = index 29)
             old_ic_data = df.iloc[:, 40].copy()
-            df.insert(30, "__OLD_IC_COPY__", old_ic_data)
+            df.insert(30, old_ic_data.name + "_COPY", old_ic_data)
 
-            # ── 4. Copy Call Duration (now shifted) and insert between Area and Black Case No. ──
-            # After insert at 30, original AW (col 48) is now col 49
+            # Step 3: Copy Call Duration — after Step 2 insert, original AW
+            # shifted from index 48 to index 49. Insert between Area and
+            # Black Case No. — Area is now at index 41, so insert at index 42.
             call_duration_data = df.iloc[:, 49].copy()
-            # Area is now at col 41, Black Case No. at col 42 → insert at 42
-            df.insert(42, "__CALL_DUR_COPY__", call_duration_data)
+            df.insert(42, call_duration_data.name + "_COPY", call_duration_data)
 
-        # ── 5. Validate Headers ───────────────────────────────────────────────
+        # ── 3. Validate Headers After Restructuring ───────────────────────────
         st.subheader("Header Validation")
+        st.caption(
+            "Validation is performed **after** column swapping and insertions, "
+            "not on the raw file."
+        )
+
         is_valid, mismatches = validate_headers(df.columns, EXPECTED_HEADERS)
 
         if is_valid:
-            st.success("✅ All headers are in the correct order and naming.")
+            st.success("✅ All 51 headers are in the correct position and naming after restructuring.")
         else:
-            st.error("❌ Header validation failed. Please review the mismatches below:")
+            st.error("❌ Header validation failed after restructuring. See mismatches below:")
             for m in mismatches:
                 st.markdown(f"- {m}")
             st.warning(
-                "Processing has been halted. "
-                "Please ensure the raw file matches the expected structure before proceeding."
+                "⚠️ Processing has been halted. "
+                "The raw file's column structure may not match what is expected. "
+                "Please verify the raw file before uploading again."
             )
             st.stop()
 
-        # ── 6. Filter Remark (Column K) — remove matching prefixes ───────────
+        # ── 4. Filter Remark (Column K) — remove by first-character prefix ────
         with st.spinner("Cleaning data..."):
 
             def remark_should_remove(val):
                 if pd.isna(val):
                     return False
                 val_lower = str(val).strip().lower()
-                return any(val_lower.startswith(prefix) for prefix in REMARK_PREFIXES_TO_REMOVE)
+                return any(
+                    val_lower.startswith(prefix)
+                    for prefix in REMARK_PREFIXES_TO_REMOVE
+                )
 
             before_remark = len(df)
-            df = df[~df["Remark"].apply(remark_should_remove)]
+            df = df[~df.iloc[:, 10].apply(remark_should_remove)]
             removed_remark = before_remark - len(df)
 
-            # ── 7. Filter Status (Column J) — remove blanks + listed values ──
+            # ── 5. Filter Status (Column J) — remove blanks + listed values ───
             def status_should_remove(val):
                 if pd.isna(val) or str(val).strip() == "":
                     return True
                 return str(val).strip().lower() in STATUS_TO_REMOVE
 
             before_status = len(df)
-            df = df[~df["Status"].apply(status_should_remove)]
+            df = df[~df.iloc[:, 9].apply(status_should_remove)]
             removed_status = before_status - len(df)
 
             df = df.reset_index(drop=True)
 
-        # ── 8. Summary ────────────────────────────────────────────────────────
+        # ── 6. Summary ────────────────────────────────────────────────────────
         st.success("✅ Processing complete!")
-        col1, col2, col3 = st.columns(3)
+
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("Final Rows", len(df))
-        col2.metric("Removed (Remark filter)", removed_remark)
-        col3.metric("Removed (Status filter)", removed_status)
+        col2.metric("Final Columns", len(df.columns))
+        col3.metric("Removed by Remark Filter", removed_remark)
+        col4.metric("Removed by Status Filter", removed_status)
 
         st.subheader("Preview — Processed File")
         st.dataframe(df.head(20), use_container_width=True)
 
-        # ── 9. Download ───────────────────────────────────────────────────────
+        # ── 7. Download ───────────────────────────────────────────────────────
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Processed")
