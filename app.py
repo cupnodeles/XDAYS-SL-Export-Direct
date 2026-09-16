@@ -48,8 +48,7 @@ AMOUNT_COLUMNS = [
 AMOUNT_SET = set(AMOUNT_COLUMNS)
 
 STATUS_TO_REMOVE = [
-    "", "abort", "locked", "new", "reactive",
-    "sms failed", "sms replied", "sms reply", "sms sent", "unlocked"
+    "",
 ]
 
 EXCEL_EPOCH = date(1899, 12, 30)
