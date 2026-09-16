@@ -1,4 +1,8 @@
-# XDAYS SL EXPORT DIRECT AUTOMATION
+# ▚ XDAYS SL EXPORT DIRECT AUTOMATION
+
+[![Streamlit](https://img.shields.io/badge/Streamlit-live-57e389?style=flat-square)](https://xdays-sl-export-direct.streamlit.app/)
+
+**Live app:** [xdays-sl-export-direct.streamlit.app](https://xdays-sl-export-direct.streamlit.app/)
 
 Eric Jerard Collantes | Modified July 31
 
@@ -15,7 +19,7 @@ Eric Jerard Collantes | Modified July 31
 > [!IMPORTANT]
 > The **XDAYS SL Export Direct** is a centralized tool designed to automate the cleaning and processing of raw export files for collection agents. This system significantly reduces human error and processing time by replacing manual column restructuring, header validation, and data filtering with a one-click automated Python pipeline.
 > 
-> **LINK:** [XDAYS SL Export Direct (Streamlit)](#)
+> **LINK:** [XDAYS SL Export Direct (Streamlit)](https://xdays-sl-export-direct.streamlit.app/)
 
 ---
 
