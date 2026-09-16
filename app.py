@@ -9,6 +9,34 @@ from openpyxl import Workbook
 
 st.set_page_config(page_title="XDAYS SL Export Direct", layout="wide")
 st.title("XDAYS SL Export Direct")
+st.markdown(
+    "Upload one raw Export file, confirm the date order in **Step 2**, "
+    "then download the standardized 51-header DRR. Dropped columns are "
+    "always listed — never silent."
+)
+# Legibility pass (2026-09-16): larger step headers, high-contrast
+# uploader + download button, readable status text on the light theme.
+st.markdown(
+    """
+    <style>
+    .stSubheader { font-size: 1.25rem; font-weight: 700; }
+    section[data-testid="stFileUploader"] {
+        border: 2px dashed #166b44;
+        border-radius: 0.75rem;
+        padding: 1rem;
+        background: #f4f1e6;
+    }
+    .stButton > button[kind="primary"], .stDownloadButton > button {
+        font-size: 1rem;
+        font-weight: 700;
+        padding: 0.6rem 1.5rem;
+    }
+    [data-testid="stStatusWidget"], .stAlert { font-size: 0.95rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown("---")
 
 # ── Canonical standardized DRR headers (51, exact order) ─────────────────────
 EXPECTED_HEADERS = [

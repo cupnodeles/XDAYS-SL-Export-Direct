@@ -1,0 +1,10 @@
+[theme]
+# Light ops-console theme: readable sans body, green accent shared with the
+# React Hub (2026-09-16 legibility pass). Pixel styling stays in the title
+# banner only — everything else is high-contrast + step-numbered.
+base = "light"
+primaryColor = "#166b44"
+backgroundColor = "#faf8ef"
+secondaryBackgroundColor = "#f4f1e6"
+textColor = "#23241f"
+font = "sans serif"
