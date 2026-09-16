@@ -397,7 +397,6 @@ def convert_export_direct(df_raw, date_order="dmy"):
         "padded_samples": padded_samples,
         "ambiguous_count": ambiguous_count,
         "ambiguous_samples": ambiguous_samples,
-        "removed_status": removed_status,
     }
     return df_out, report
 
@@ -546,7 +545,6 @@ if uploaded_file:
         st.success("✅ Standardization complete.")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Final Rows", f"{report['rows_out']:,}")
-        m2.metric("Removed (Status filter)", f"{report['removed_status']:,}")
         m3.metric("Account No. padded", f"{report['padded_count']:,}")
         m4.metric("Ambiguous dates", f"{report['ambiguous_count']:,}")
         if report["padded_samples"]:
