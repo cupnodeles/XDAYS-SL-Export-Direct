@@ -401,8 +401,14 @@ def convert_export_direct(df_raw, date_order="dmy"):
     return df_out, report
 
 
-def preview_dates(df_raw, standard_to_input, date_order="dmy", max_per_column=3):
-    """Sample raw -> interpreted date previews for the confirm screen."""
+def preview_dates(df_raw, standard_to_input, date_order="dmy", max_per_column=3, include_invalid=True):
+    """Sample raw -> interpreted date previews for the confirm screen.
+
+    Realtime: pure function of `date_order`, so the Step-2 radio refreshes
+    it instantly. Invalid/unparseable dates are included as
+    "— (blank)" with status instead of being skipped, so picking the
+    wrong order (e.g. mdy on 15/09/2026) is visible rather than empty.
+    """
     samples = []
     seen = {}
     for _, row in df_raw.iterrows():
@@ -415,15 +421,27 @@ def preview_dates(df_raw, standard_to_input, date_order="dmy", max_per_column=3)
                 continue
             if re.match(r"^0{4}-0{2}-0{2}", str(value).strip()):
                 continue
+            if re.match(r"^0+$", str(value).strip()):
+                continue  # placeholder zero, not a real date attempt
             parsed, ambiguous, _ = parse_date_with_order(value, date_order)
             if parsed is None:
-                continue
-            samples.append({
-                "column": std,
-                "raw": str(value).strip(),
-                "interpreted": format_mmddyyyy(parsed),
-                "ambiguous": ambiguous,
-            })
+                if not include_invalid:
+                    continue
+                samples.append({
+                    "column": std,
+                    "raw": str(value).strip(),
+                    "interpreted": "— (blank)",
+                    "ambiguous": False,
+                    "status": "blank/invalid",
+                })
+            else:
+                samples.append({
+                    "column": std,
+                    "raw": str(value).strip(),
+                    "interpreted": format_mmddyyyy(parsed),
+                    "ambiguous": ambiguous,
+                    "status": "ok",
+                })
             seen[std] = seen.get(std, 0) + 1
         if all(
             standard_to_input.get(std) is None or seen.get(std, 0) >= max_per_column
@@ -431,6 +449,63 @@ def preview_dates(df_raw, standard_to_input, date_order="dmy", max_per_column=3)
         ):
             break
     return samples
+
+
+def build_date_mirror(df_raw, standard_to_input, date_order="dmy", n_rows=10):
+    """Live mirror: first n_rows x date columns as raw -> interpreted rows.
+
+    Returns list of dicts {row, column, raw, interpreted, ambiguous, status}.
+    Cheap (n_rows * 7 parses) so Step-2 stays instant on every radio click.
+    """
+    mirror = []
+    for i, (_, row) in enumerate(df_raw.head(n_rows).iterrows()):
+        row_num = i + 2  # + header
+        for std in DATE_COLUMNS:
+            input_col = standard_to_input.get(std)
+            if input_col is None:
+                continue
+            value, _ = defuse_cell_value(row[input_col])
+            if value is None or str(value).strip() == "":
+                continue
+            if re.match(r"^0{4}-0{2}-0{2}", str(value).strip()):
+                continue
+            if re.match(r"^0+$", str(value).strip()):
+                continue  # placeholder zero, not a real date attempt
+            parsed, ambiguous, _ = parse_date_with_order(value, date_order)
+            mirror.append({
+                "row": row_num,
+                "column": std,
+                "raw": str(value).strip(),
+                "interpreted": format_mmddyyyy(parsed) if parsed is not None else "— (blank)",
+                "ambiguous": ambiguous and parsed is not None,
+                "status": "ok" if parsed is not None else "blank/invalid",
+            })
+    return mirror
+
+
+def count_date_outcomes(df_raw, standard_to_input, date_order="dmy", n_rows=10):
+    """Count parsed/blanked/ambiguous for the live Step-2 metrics."""
+    parsed = blanked = ambiguous = 0
+    for _, row in df_raw.head(n_rows).iterrows():
+        for std in DATE_COLUMNS:
+            input_col = standard_to_input.get(std)
+            if input_col is None:
+                continue
+            value, _ = defuse_cell_value(row[input_col])
+            if value is None or str(value).strip() == "":
+                continue
+            if re.match(r"^0{4}-0{2}-0{2}", str(value).strip()):
+                continue
+            if re.match(r"^0+$", str(value).strip()):
+                continue  # placeholder zero, not a real date attempt
+            result, is_ambiguous, _ = parse_date_with_order(value, date_order)
+            if result is None:
+                blanked += 1
+            else:
+                parsed += 1
+                if is_ambiguous:
+                    ambiguous += 1
+    return parsed, blanked, ambiguous
 
 
 def output_name(uploaded_name):
@@ -530,10 +605,37 @@ if uploaded_file:
         )
 
         date_samples = preview_dates(df_raw, standard_to_input, date_order)
+        other_order = "mdy" if date_order == "dmy" else "dmy"
+        cur_parsed, cur_blanked, cur_ambiguous = count_date_outcomes(
+            df_raw, standard_to_input, date_order
+        )
+        _, other_blanked, _ = count_date_outcomes(
+            df_raw, standard_to_input, other_order
+        )
+
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Parsed", f"{cur_parsed:,}")
+        d2.metric("Blanked", f"{cur_blanked:,}")
+        d3.metric("Ambiguous", f"{cur_ambiguous:,}")
+        if cur_blanked > other_blanked:
+            st.warning(
+                f"⚠️ {date_order.upper()} blanks {cur_blanked} dates in the first 10 rows "
+                f"vs {other_blanked} for {other_order.upper()} "
+                f"(e.g. 15/09/2026 needs DD/MM). Check the mirror below before continuing."
+            )
+
         if date_samples:
-            st.caption("Date preview (raw → interpreted)")
+            st.caption("Date preview (raw → interpreted) — updates instantly when you switch order")
             st.dataframe(
-                pd.DataFrame(date_samples)[["column", "raw", "interpreted", "ambiguous"]],
+                pd.DataFrame(date_samples)[["column", "raw", "interpreted", "ambiguous", "status"]],
+                use_container_width=True,
+            )
+
+        mirror = build_date_mirror(df_raw, standard_to_input, date_order, n_rows=10)
+        if mirror:
+            st.caption("Live mirror — first 10 rows × date columns, as read with current order")
+            st.dataframe(
+                pd.DataFrame(mirror)[["row", "column", "raw", "interpreted", "ambiguous", "status"]],
                 use_container_width=True,
             )
 
