@@ -532,7 +532,7 @@ def write_output_workbook(df):
     """
     wb = Workbook()
     ws = wb.active
-    ws.title = "Processed"
+    ws.title = "sheet"
     ws.append(list(EXPECTED_HEADERS))
 
     for _, row in df.iterrows():
