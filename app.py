@@ -165,6 +165,93 @@ def defuse_cell_value(raw):
     return text, False
 
 
+# ── Mojibake repair (UTF-8 bytes mis-decoded as cp1252/latin-1) ─────────────
+# e.g. "CHâ€™s" -> "CH’s", "cafÃ©" -> "café". Two layers:
+#  A) explicit map for common punctuation + full Ã-family accented letters
+#     (incl. double-encoded "Ã¢â‚¬â„¢" class per Wikipedia/ftfy references);
+#  B) generic encode(cp1252/latin-1)->decode(utf-8) with strict-improvement
+#     gate so clean text is never mangled. Idempotent by design.
+MOJIBAKE_MAP = [
+    # Double-encoded (fix first, longest keys first).
+    ("Ã¢â‚¬â„¢", "’"), ("Ã¢â‚¬Å“", "“"), ("Ã¢â‚¬�", "”"),
+    ("Ã¢â‚¬â€œ", "–"), ("Ã¢â‚¬â€”", "—"), ("Ã¢â‚¬Â¦", "…"),
+    ("ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢", "’"),
+    ("Ãƒ©", "é"), ("Ãƒ¨", "è"), ("Ãƒ±", "ñ"),
+    # Single-level punctuation / symbols (longest keys first — generic
+    # "â€" last so it never splits "â€œ"/"â€“"/"â€”" etc.).
+    ("â€™", "’"), ("â€˜", "‘"), ("â€œ", "“"),
+    ("â€¹", "‹"), ("â€º", "›"), ("â€“", "–"), ("â€”", "—"),
+    ("â€¦", "…"), ("â€¢", "•"), ("â‚¬", "€"), ("âœ”", "✔"),
+    ("â€", "”"),
+    ("â†’", "→"), ("â†‘", "↑"), ("â†“", "↓"),
+    ("Å“", "œ"), ("Å’", "’"),
+    ("Â©", "©"), ("Â®", "®"), ("Â°", "°"), ("Â·", "·"),
+    # Full Ã-family accented letters (lower + upper).
+    ("Ã©", "é"), ("Ã¨", "è"), ("Ãª", "ê"), ("Ã«", "ë"),
+    ("Ã¡", "á"), ("Ã ", "à"), ("Ã¢", "â"), ("Ã£", "ã"),
+    ("Ã¤", "ä"), ("Ã¥", "å"), ("Ã§", "ç"),
+    ("Ã±", "ñ"), ("Ã³", "ó"), ("Ã²", "ò"), ("Ã´", "ô"),
+    ("Ãµ", "õ"), ("Ã¶", "ö"), ("Ãº", "ú"), ("Ã¹", "ù"),
+    ("Ã»", "û"), ("Ã¼", "ü"), ("Ã½", "ý"), ("Ã¿", "ÿ"),
+    ("Ã‰", "É"), ("Ãˆ", "È"), ("Ã‘", "Ñ"), ("Ã“", "Ó"),
+    ("Ã’", "Ò"), ("Ã”", "Ô"), ("Ã–", "Ö"), ("Ãš", "Ú"),
+    ("Ã™", "Ù"), ("Ãœ", "Ü"), ("Ã€", "À"),
+    ("ÃŽ", "Î"),
+    # Stray nbsp remnant — applied last so real content is rescued first.
+    ("Â", ""),
+]
+
+_MOJIBAKE_MARKERS = ("â", "Ã", "Â", "Å")
+
+
+def _mojibake_score(text):
+    return sum(text.count(m) for m in _MOJIBAKE_MARKERS)
+
+
+def fix_mojibake(text):
+    """Repair mojibake in a text cell. Returns fixed string (idempotent)."""
+    if not isinstance(text, str) or text == "":
+        return text
+    if not any(m in text for m in _MOJIBAKE_MARKERS):
+        return text
+    fixed = text
+    for _ in range(5):
+        prev = fixed
+        for bad, good in MOJIBAKE_MAP:
+            if bad and bad in fixed:
+                fixed = fixed.replace(bad, good)
+        # Generic repair for any remaining markers (long-tail coverage).
+        if any(m in fixed for m in _MOJIBAKE_MARKERS):
+            for enc in ("cp1252", "latin-1"):
+                try:
+                    cand = fixed.encode(enc).decode("utf-8")
+                except (UnicodeError, ValueError):
+                    continue
+                if _mojibake_score(cand) < _mojibake_score(fixed):
+                    fixed = cand
+                    break
+        if fixed == prev:
+            break
+    return fixed
+
+
+# Short reference rows for the UI expander (before -> after).
+MOJIBAKE_REFERENCE = [
+    {"before": "CHâ€™s", "after": "CH’s"},
+    {"before": "â€˜hiâ€™", "after": "‘hi’"},
+    {"before": "â€œABCâ€", "after": "“ABC”"},
+    {"before": "aâ€“b", "after": "a–b"},
+    {"before": "aâ€”b", "after": "a—b"},
+    {"before": "cafÃ©", "after": "café"},
+    {"before": "seÃ±or", "after": "señor"},
+    {"before": "l’humanitÃ©", "after": "l’humanité"},
+    {"before": "â€¦", "after": "…"},
+    {"before": "â€¢ item", "after": "• item"},
+    {"before": "â‚¬100", "after": "€100"},
+    {"before": "Ã¢â‚¬â„¢", "after": "’"},
+]
+
+
 # ── Account No. cleaning ─────────────────────────────────────────────────────
 def clean_account_no(raw):
     """Digits-only exact-8 rule: 12345678 -> 00000012345678 (text).
@@ -348,6 +435,8 @@ def convert_export_direct(df_raw, date_order="dmy"):
     padded_samples = []
     ambiguous_count = 0
     ambiguous_samples = []
+    mojibake_count = 0
+    mojibake_samples = []
 
     for i, (_, row) in enumerate(df_raw.iterrows()):
         row_num = i + 2
@@ -401,9 +490,29 @@ def convert_export_direct(df_raw, date_order="dmy"):
                     elif re.fullmatch(r"-?\d+(\.\d+)?", text.strip()):
                         out[std] = float(text.strip())
                     else:
-                        out[std] = text
+                        fixed = fix_mojibake(text)
+                        out[std] = fixed
+                        if fixed != text:
+                            mojibake_count += 1
+                            if len(mojibake_samples) < 100:
+                                mojibake_samples.append({
+                                    "row": row_num,
+                                    "column": std,
+                                    "before": text,
+                                    "after": fixed,
+                                })
                 else:
-                    out[std] = text
+                    fixed = fix_mojibake(text)
+                    out[std] = fixed
+                    if fixed != text:
+                        mojibake_count += 1
+                        if len(mojibake_samples) < 100:
+                            mojibake_samples.append({
+                                "row": row_num,
+                                "column": std,
+                                "before": text,
+                                "after": fixed,
+                            })
         out_rows.append(out)
 
     df_out = pd.DataFrame(out_rows, columns=EXPECTED_HEADERS)
@@ -425,6 +534,8 @@ def convert_export_direct(df_raw, date_order="dmy"):
         "padded_samples": padded_samples,
         "ambiguous_count": ambiguous_count,
         "ambiguous_samples": ambiguous_samples,
+        "mojibake_count": mojibake_count,
+        "mojibake_samples": mojibake_samples,
     }
     return df_out, report
 
@@ -629,6 +740,7 @@ if uploaded_file:
         st.success("✅ Standardization complete.")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Final Rows", f"{report['rows_out']:,}")
+        m2.metric("Garbled fixed", f"{report.get('mojibake_count', 0):,}")
         m3.metric("Account No. padded", f"{report['padded_count']:,}")
         m4.metric("Ambiguous dates", f"{report['ambiguous_count']:,}")
         if report["padded_samples"]:
@@ -636,6 +748,28 @@ if uploaded_file:
             st.caption(
                 f"Account padding sample: `{first['before']}` → `{first['after']}`"
             )
+
+        # ── 4b. Garbled characters before/after ──────────────────────────
+        mojibake_samples = report.get("mojibake_samples", [])
+        mojibake_count = report.get("mojibake_count", 0)
+        st.subheader("Garbled Characters — Before → After")
+        if mojibake_samples:
+            preview = mojibake_samples[:50]
+            st.dataframe(
+                pd.DataFrame(preview)[["row", "column", "before", "after"]],
+                use_container_width=True,
+            )
+            if mojibake_count > len(preview):
+                st.caption(
+                    f"Showing first {len(preview)} of {mojibake_count:,} "
+                    "repairs found in the file."
+                )
+            else:
+                st.caption(f"{mojibake_count:,} garbled cell(s) fixed.")
+        else:
+            st.caption("No garbled characters found.")
+        with st.expander("Full garbled → fixed reference"):
+            st.table(pd.DataFrame(MOJIBAKE_REFERENCE))
 
         # ── 5. Preview ───────────────────────────────────────────────────────
         st.subheader("Preview — Standardized File")
