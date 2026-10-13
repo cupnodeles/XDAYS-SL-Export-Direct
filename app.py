@@ -8,7 +8,7 @@ import streamlit as st
 from openpyxl import Workbook
 
 st.set_page_config(page_title="XDAYS SL Export Direct", layout="wide")
-st.title("XDAYS SL Export Direct")
+st.title("DRR Export Direct")
 st.markdown(
     "Upload one raw Export file, confirm the date order in **Step 2**, "
     "then download the standardized 51-header DRR. Dropped columns are "
