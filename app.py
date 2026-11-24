@@ -738,6 +738,24 @@ def write_output_workbook(df):
 
 
 # ── Main App ─────────────────────────────────────────────────────────────────
+# ── PL XDAYS Filter (set before uploading) ──────────────────────────────────
+apply_pl_xdays = st.checkbox(
+    "Apply PL XDAYS Filter",
+    value=False,
+    help="Optional. When off, the file is standardized only (no rows removed).",
+)
+with st.expander("PL XDAYS Filter — rules"):
+    st.markdown(
+        "**Remark** — row is removed when it:"
+        f"\n- contains any of: {', '.join(f'`{p}`' for p in PL_XDAYS_REMARK_CONTAINS)}"
+        f"\n- starts with any of: {', '.join(f'`{p}`' for p in PL_XDAYS_REMARK_STARTS)}"
+    )
+    st.markdown(
+        "**Status** — row is removed when it is blank or exactly:"
+        f"\n{', '.join(f'`{s}`' for s in PL_XDAYS_STATUS_TO_REMOVE)}"
+    )
+st.markdown("---")
+
 uploaded_file = st.file_uploader(
     "Upload Raw Export File (.csv, .xlsx, .xls — any headers)",
     type=["csv", "xlsx", "xls"],
@@ -795,22 +813,7 @@ if uploaded_file:
 
         # ── 4. Convert ───────────────────────────────────────────────────────
         st.subheader("Step 3 — Standardize")
-        apply_pl_xdays = st.checkbox(
-            "Apply PL XDAYS Filter",
-            value=False,
-            help="Optional. When off, the file is standardized only (no rows removed).",
-        )
-        with st.expander("PL XDAYS Filter — rules"):
-            st.markdown(
-                "**Remark** — row is removed when it:"
-                f"\n- contains any of: {', '.join(f'`{p}`' for p in PL_XDAYS_REMARK_CONTAINS)}"
-                f"\n- starts with any of: {', '.join(f'`{p}`' for p in PL_XDAYS_REMARK_STARTS)}"
-            )
-            st.markdown(
-                "**Status** — row is removed when it is blank or exactly:"
-                f"\n{', '.join(f'`{s}`' for s in PL_XDAYS_STATUS_TO_REMOVE)}"
-            )
-
+        st.caption(f"PL XDAYS Filter: {'ON' if apply_pl_xdays else 'OFF'}")
         with st.spinner("Converting..."):
             df_out, report = convert_export_direct(df_raw, date_order, apply_pl_xdays)
 
