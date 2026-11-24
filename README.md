@@ -32,9 +32,10 @@ Eric Jerard Collantes | Modified July 31
      - Copy `Old IC` column and insert it beside the `Contact Type` column.
      - Copy `Call Duration` column and insert it between the `Area` and `Black Case No.` columns.
    - **VALIDATE:** Check the newly arranged columns against a strict expected list of headers to prevent data corruption.
-   - **FILTER:** 
-     - *Remark Filter*: Exclude rows where the remark starts with "new assignment", "new contact", or "system auto update".
-     - *Status Filter*: Exclude rows with blank statuses or statuses matching "abort", "locked", "new", "sms sent", etc.
+   - **FILTER (optional "PL XDAYS Filter" toggle):**
+     - *Remark Filter*: Remove rows whose Remark **contains** "new assignment" or **starts with** "New Contact Details" / "System Auto Update Remarks".
+     - *Status Filter*: Remove rows with a blank Status or an exact match of "NEW", "Abort", "LOCKED", "REACTIVE", "SMS FAILED", "SMS Replied", "SMS REPLY", "SMS SENT", "UNLOCKED", "PAYMENT - CURED", "PTP - SELF CURED".
+     - When the toggle is off, the file is standardized only (no rows removed).
 3. **Generate Processed File** using the *cleaned output DataFrame*.
    - *Output as an Excel file ready for download.*
 

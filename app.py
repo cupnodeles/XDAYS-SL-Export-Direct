@@ -75,8 +75,29 @@ AMOUNT_COLUMNS = [
 ]
 AMOUNT_SET = set(AMOUNT_COLUMNS)
 
-STATUS_TO_REMOVE = [
-    "",
+# ── PL XDAYS filter rules (optional, case-insensitive) ──────────────────────
+# Remark rows are dropped when the text *contains* a CONTAINS phrase or
+# *starts with* a STARTS phrase. Status rows are dropped on an exact match
+# (after strip + lowercase) against the list below, plus any blank status.
+PL_XDAYS_REMARK_CONTAINS = [
+    "new assignment",
+]
+PL_XDAYS_REMARK_STARTS = [
+    "new contact details",
+    "system auto update remarks",
+]
+PL_XDAYS_STATUS_TO_REMOVE = [
+    "new",
+    "abort",
+    "locked",
+    "reactive",
+    "sms failed",
+    "sms replied",
+    "sms reply",
+    "sms sent",
+    "unlocked",
+    "payment - cured",
+    "ptp - self cured",
 ]
 
 EXCEL_EPOCH = date(1899, 12, 30)
@@ -409,24 +430,47 @@ def load_file(uploaded_file):
     return df
 
 
-# ── Status filter (kept per spec) ────────────────────────────────────────────
-def status_should_remove(val):
+# ── PL XDAYS filter matching ─────────────────────────────────────────────────
+def _norm_text(val):
+    """Strip a cell to a lowercase string; None/NaN become ""."""
     if val is None:
-        return True
+        return ""
     try:
         if pd.isna(val):
-            return True
+            return ""
     except (TypeError, ValueError):
         pass
-    return str(val).strip().lower() in STATUS_TO_REMOVE
+    return str(val).strip().lower()
+
+
+def pl_xdays_remark_should_remove(val):
+    """Drop a row when its Remark matches a PL XDAYS phrase."""
+    text = _norm_text(val)
+    if text == "":
+        return False
+    if any(phrase in text for phrase in PL_XDAYS_REMARK_CONTAINS):
+        return True
+    return any(text.startswith(phrase) for phrase in PL_XDAYS_REMARK_STARTS)
+
+
+def pl_xdays_status_should_remove(val):
+    """Drop a row when its Status is blank or an exact listed value."""
+    text = _norm_text(val)
+    if text in ("", "(blanks)"):
+        return True
+    return text in PL_XDAYS_STATUS_TO_REMOVE
 
 
 # ── Core conversion ──────────────────────────────────────────────────────────
-def convert_export_direct(df_raw, date_order="dmy"):
-    """Standardize any-header input into the 51-header DRR + Status clean.
+def convert_export_direct(df_raw, date_order="dmy", apply_pl_xdays_filter=False):
+    """Standardize any-header input into the 51-header DRR.
+
+    When `apply_pl_xdays_filter` is True, rows matching the PL XDAYS Remark
+    or Status rules are dropped and a per-reason breakdown is returned in
+    the report. Otherwise the output is standardize-only (no row removal).
 
     Returns (df_out, report) where report holds mapped/dropped lists,
-    padded/ambiguous counts and samples.
+    padded/ambiguous counts, samples and the PL XDAYS removal breakdown.
     """
     standard_to_input, dropped, mapped = build_header_map(list(df_raw.columns))
 
@@ -517,11 +561,23 @@ def convert_export_direct(df_raw, date_order="dmy"):
 
     df_out = pd.DataFrame(out_rows, columns=EXPECTED_HEADERS)
 
-    removed_status = 0
-    if "Status" in df_out.columns and len(df_out) > 0:
-        before_status = len(df_out)
-        df_out = df_out[~df_out["Status"].apply(status_should_remove)].copy()
-        removed_status = before_status - len(df_out)
+    remark_removed = 0
+    status_removed = 0
+    status_breakdown = {}
+    if apply_pl_xdays_filter and len(df_out) > 0:
+        if "Remark" in df_out.columns:
+            remark_mask = df_out["Remark"].apply(pl_xdays_remark_should_remove)
+            remark_removed = int(remark_mask.sum())
+            df_out = df_out[~remark_mask].copy()
+
+        if "Status" in df_out.columns:
+            status_keys = df_out["Status"].apply(_norm_text)
+            status_mask = df_out["Status"].apply(pl_xdays_status_should_remove)
+            for key in status_keys[status_mask]:
+                label = key if key != "" else "(blanks)"
+                status_breakdown[label] = status_breakdown.get(label, 0) + 1
+            status_removed = int(status_mask.sum())
+            df_out = df_out[~status_mask].copy()
 
     df_out = df_out.reset_index(drop=True)
 
@@ -536,6 +592,11 @@ def convert_export_direct(df_raw, date_order="dmy"):
         "ambiguous_samples": ambiguous_samples,
         "mojibake_count": mojibake_count,
         "mojibake_samples": mojibake_samples,
+        "pl_xdays_filter_applied": bool(apply_pl_xdays_filter),
+        "remark_removed": remark_removed,
+        "status_removed": status_removed,
+        "status_breakdown": status_breakdown,
+        "rows_removed_total": remark_removed + status_removed,
     }
     return df_out, report
 
@@ -734,20 +795,64 @@ if uploaded_file:
 
         # ── 4. Convert ───────────────────────────────────────────────────────
         st.subheader("Step 3 — Standardize")
+        apply_pl_xdays = st.checkbox(
+            "Apply PL XDAYS Filter",
+            value=False,
+            help="Optional. When off, the file is standardized only (no rows removed).",
+        )
+        with st.expander("PL XDAYS Filter — rules"):
+            st.markdown(
+                "**Remark** — row is removed when it:"
+                f"\n- contains any of: {', '.join(f'`{p}`' for p in PL_XDAYS_REMARK_CONTAINS)}"
+                f"\n- starts with any of: {', '.join(f'`{p}`' for p in PL_XDAYS_REMARK_STARTS)}"
+            )
+            st.markdown(
+                "**Status** — row is removed when it is blank or exactly:"
+                f"\n{', '.join(f'`{s}`' for s in PL_XDAYS_STATUS_TO_REMOVE)}"
+            )
+
         with st.spinner("Converting..."):
-            df_out, report = convert_export_direct(df_raw, date_order)
+            df_out, report = convert_export_direct(df_raw, date_order, apply_pl_xdays)
 
         st.success("✅ Standardization complete.")
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Final Rows", f"{report['rows_out']:,}")
         m2.metric("Garbled fixed", f"{report.get('mojibake_count', 0):,}")
         m3.metric("Account No. padded", f"{report['padded_count']:,}")
         m4.metric("Ambiguous dates", f"{report['ambiguous_count']:,}")
+        m5.metric("Rows removed (PL XDAYS)", f"{report.get('rows_removed_total', 0):,}")
         if report["padded_samples"]:
             first = report["padded_samples"][0]
             st.caption(
                 f"Account padding sample: `{first['before']}` → `{first['after']}`"
             )
+
+        # ── 4a. PL XDAYS removal breakdown ───────────────────────────────
+        if report.get("pl_xdays_filter_applied"):
+            st.subheader("PL XDAYS Filter — Removed Rows")
+            breakdown_rows = [
+                {"reason": "Remark", "rule": "matches PL XDAYS remark rule",
+                 "removed": report.get("remark_removed", 0)}
+            ]
+            for status, count in sorted(
+                report.get("status_breakdown", {}).items(),
+                key=lambda kv: (-kv[1], kv[0]),
+            ):
+                breakdown_rows.append(
+                    {"reason": "Status", "rule": status, "removed": count}
+                )
+            st.dataframe(
+                pd.DataFrame(breakdown_rows)[["reason", "rule", "removed"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                f"{report.get('rows_removed_total', 0):,} row(s) removed "
+                f"({report.get('remark_removed', 0):,} by Remark, "
+                f"{report.get('status_removed', 0):,} by Status)."
+            )
+        else:
+            st.caption("PL XDAYS Filter is off — no rows were removed.")
 
         # ── 4b. Garbled characters before/after ──────────────────────────
         mojibake_samples = report.get("mojibake_samples", [])
